@@ -1,52 +1,62 @@
-const BUFFER_WIDTH: usize = 80;
-const BUFFER_HEIGHT: usize = 25;
+use bootloader_api::info::{FrameBuffer, FrameBufferInfo, PixelFormat};
 
-const SCREEN_PTR: usize = 0xB8000;
-
-pub struct VGATextMode {
-  col: usize,
-  row: usize,
-  buffer: [[ScreenChar; BUFFER_WIDTH]; BUFFER_HEIGHT],  
+pub struct Screen {
+  frame_buffer: &'static mut [u8],
+  info: FrameBufferInfo,
 }
 
 #[derive(Clone, Copy)]
-#[repr(C)]
-struct ScreenChar {
-  ascii_character: u8,
-  color_code: u8,
+pub struct Color {
+  r: u8,
+  g: u8,
+  b: u8
 }
 
-impl VGATextMode {
-  pub fn new() -> VGATextMode {
-    VGATextMode { 
-      row: 0,
-      col: 0,
-      buffer: [[ScreenChar::zero(); BUFFER_WIDTH]; BUFFER_HEIGHT],
-    }
+impl Screen {
+  pub fn new(buffer: &'static mut FrameBuffer) -> Screen {
+    let info = buffer.info();
+    let frame_buffer = buffer.buffer_mut();
+
+    Screen{ frame_buffer, info }
   }
 
-  pub fn write_str(&mut self, s: &[u8]) {
-    for &c in s {
-      self.write_char(c)
-    }
-  }
+  pub fn clear(&mut self, color: Color) {
+    let height = self.info.height;
+    let width = self.info.stride;
+    let pixel_size = self.info.bytes_per_pixel;
+    let mut pixel = [0; 8];
 
-  pub fn write_char(&mut self, c: u8) {
-    let color = 0x0F;
-    let c = ScreenChar { 
-      ascii_character: c,
-      color_code: color,
+    match self.info.pixel_format {
+      PixelFormat::Rgb => {
+        pixel[0] = color.r;
+        pixel[1] = color.g;
+        pixel[2] = color.b;
+      } 
+      PixelFormat::Bgr => {
+        pixel[0] = color.b;
+        pixel[1] = color.g;
+        pixel[2] = color.r;
+      }
+      PixelFormat::U8  => {
+        let r = color.r as u16;
+        let g = color.g as u16;
+        let b = color.b as u16;
+        let mono = (r + g + b) / 3;
+        for p in pixel.iter_mut() {
+          *p = mono as u8;
+        }
+      }
+      _ => panic!(),
     };
 
-    self.buffer[self.row][self.col] = c;
-    let ptr = SCREEN_PTR as *mut ScreenChar;
-    let idx = (self.row * BUFFER_WIDTH + self.col) as isize;
-    unsafe { *ptr.offset(idx) = c } 
+    for i in 0..height * width {
+      self.frame_buffer[i * pixel_size..].copy_from_slice(&pixel[0..pixel_size])
+    } 
   }
 }
 
-impl ScreenChar {
-  fn zero() -> ScreenChar {
-    ScreenChar { ascii_character: 0, color_code: 0 }
+impl Color {
+  pub fn black() -> Color {
+    Color{ r: 0, g: 0, b: 0 }
   }
 }
