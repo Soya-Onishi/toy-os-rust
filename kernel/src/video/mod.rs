@@ -46,7 +46,7 @@ impl Screen {
           *p = mono as u8;
         }
       }
-      _ => panic!(),
+      _ => panic!("not supported PixelFormat. abort."),
     };
 
     for i in 0..height * width {
