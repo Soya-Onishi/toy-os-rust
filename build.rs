@@ -1,4 +1,3 @@
-
 fn main() {
     // set by cargo, build scripts should use this directory for output files
     let out_dir = std::env::var_os("OUT_DIR").unwrap();

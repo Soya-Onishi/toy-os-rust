@@ -5,8 +5,9 @@ fn main() {
     
     let mut cmd = std::process::Command::new("qemu-system-x86_64");
     cmd.arg("-drive").arg(format!("format=raw,file={bios_path}"));
-    // cmd.arg("-s");
-    // cmd.arg("-S");
+    cmd.args(["-monitor", "stdio"]);
+    cmd.args(["-gdb", "tcp::9000"]);
+    cmd.arg("-S");
 
     let mut child = cmd.spawn().unwrap();
     child.wait().unwrap();
