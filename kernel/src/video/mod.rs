@@ -49,6 +49,9 @@ impl Screen {
       _ => panic!("not supported PixelFormat. abort."),
     };
 
+    for dst in self.frame_buffer.chunks_mut(pixel_size) {
+      dst.copy_from_slice(&pixel[0..pixel_size]);
+    }
     for i in 0..height * width {
       let start = i * pixel_size;
       let end = (i + 1) * pixel_size;
