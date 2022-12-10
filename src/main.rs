@@ -11,7 +11,8 @@ fn main() {
 
     // read env variables that were set in build script
     let bios_path = env!("BIOS_PATH");
-    println!("{}", &bios_path);
+    // let bios_stage4_path = env!("BIOS_STAGE_4_PATH");
+    println!("bios_path   = {}", &bios_path);
     
     let mut cmd = std::process::Command::new("qemu-system-x86_64");
     cmd.arg("-drive").arg(format!("format=raw,file={bios_path}"));
