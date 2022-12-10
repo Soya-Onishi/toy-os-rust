@@ -50,7 +50,9 @@ impl Screen {
     };
 
     for i in 0..height * width {
-      self.frame_buffer[i * pixel_size..].copy_from_slice(&pixel[0..pixel_size])
+      let start = i * pixel_size;
+      let end = (i + 1) * pixel_size;
+      self.frame_buffer[start..end].copy_from_slice(&pixel[0..pixel_size])
     } 
   }
 }
