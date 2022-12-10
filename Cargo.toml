@@ -3,6 +3,9 @@ name = "toy-os"
 version = "0.1.0"
 edition = "2021"
 
+[dependencies]
+clap = { version = "4.0", features = ["derive"] }
+
 [build-dependencies]
 bootloader = { path = "../bootloader" }
 kernel = { path = "kernel", artifact = "bin", target = "x86_64-unknown-none" }
