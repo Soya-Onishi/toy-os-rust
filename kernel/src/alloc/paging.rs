@@ -1,8 +1,6 @@
 const PAGE_ENTRY_NUM: usize = 512;
 
-static mut init_level_3: PageTable = PageTable { entries: [PageEntry { entry: 0 }; PAGE_ENTRY_NUM] };
-static mut init_level_2: PageTable = PageTable { entries: [PageEntry { entry: 0 }; PAGE_ENTRY_NUM] };
-static mut init_level_1: PageTable = PageTable { entries: [PageEntry { entry: 0 }; PAGE_ENTRY_NUM] };
+static mut init_paging_buffer: [PageTable; ]
 
 #[repr(C)]
 struct  PageTable {

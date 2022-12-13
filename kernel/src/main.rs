@@ -20,7 +20,7 @@ fn kernel_main(boot_info: &'static mut bootloader_api::BootInfo) -> ! {
     let mut screen = Screen::new(frame_buffer);
     screen.clear(video::Color::black());
 
-    let allocator = kalloc::BitMapAllocator::new(&boot_info.memory_regions);
+    let allocator = kalloc::GlobalAllocator::new(&boot_info.memory_regions);
     kalloc::set_allocator(allocator);
 
     loop {}

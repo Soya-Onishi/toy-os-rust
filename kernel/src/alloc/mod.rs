@@ -12,27 +12,36 @@ type FlagElemType = u64;
 
 const MEMORY_BLOCK_SIZE: usize = 4096;
 const FLAG_BITS: usize = FlagElemType::BITS as usize;
-const INIT_ALLOC_SIZE: usize = 16 * 1024 * 1024;
+const INIT_ALLOC_SIZE: usize = 4 * 1024 * 1024;
 const INIT_BITMAP_SIZE: usize = INIT_ALLOC_SIZE / (MEMORY_BLOCK_SIZE * FLAG_BITS);
 
-static mut init_alloc_bitmap: [FlagElemType; INIT_BITMAP_SIZE] = [0; INIT_BITMAP_SIZE];
+static mut MEMORY_REGIONS: info::MemoryRegions = info::MemoryRegions {
+  ptr: ptr::null_mut(),
+  len: 0,
+};
+
+#[repr(align(4096))]
+#[repr(C)]
+struct InitBuffer([u8; INIT_ALLOC_SIZE]);
+static mut INIT_MEMORY_BUFFER: InitBuffer = InitBuffer([0; INIT_ALLOC_SIZE]);
+static mut INIT_MEMORY_BITMAP: [FlagElemType; INIT_BITMAP_SIZE] = [0; INIT_BITMAP_SIZE];
 
 #[global_allocator]
-static mut GLOBAL_ALLOCATOR: BitMapAllocator = BitMapAllocator { 
-    head: 0, 
+static mut GLOBAL_ALLOCATOR: GlobalAllocator = GlobalAllocator { 
+    head: unsafe { &mut INIT_MEMORY_BUFFER.0[..] }, 
     capacity: 0, 
-    used_flags: core::cell::UnsafeCell::new(core::ptr::null_mut())
+    next: ptr::null_mut(),
 }; 
 
-pub struct BitMapAllocator {
-  head: usize,
+pub struct GlobalAllocator {
+  head: &'static mut [u8],
   capacity: usize,
-  used_flags: UnsafeCell<*mut FlagElemType>,
+  next: *mut GlobalAllocator,
 }
 
-unsafe impl Sync for BitMapAllocator {}
+unsafe impl Sync for GlobalAllocator {}
 
-unsafe impl GlobalAlloc for BitMapAllocator {
+unsafe impl GlobalAlloc for GlobalAllocator {
   unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
     let size = layout.size();
     let entries = (size + MEMORY_BLOCK_SIZE - 1) / MEMORY_BLOCK_SIZE;
@@ -40,6 +49,10 @@ unsafe impl GlobalAlloc for BitMapAllocator {
     let mut allocatable = 0;
 
     asm!("cli");
+    let allocator = unsafe { &mut GLOBAL_ALLOCATOR };
+    if allocator.capacity < size { 
+
+    }
     let used_flags = core::slice::from_raw_parts_mut(*self.used_flags.get(), self.capacity / MEMORY_BLOCK_SIZE);
 
     // 得られたentriesを連続して確保できる領域が存在するか探索する
@@ -96,48 +109,48 @@ unsafe impl GlobalAlloc for BitMapAllocator {
   }
 }
 
-impl BitMapAllocator {
-  pub fn new(regions: &info::MemoryRegions) -> BitMapAllocator {
-    let region = regions.iter()
-      .filter(|&r| matches!(r.kind, info::MemoryRegionKind::Usable))
-      .max_by(|&r0, &r1| {
-        let r0_size = r0.start - r0.end;
-        let r1_size = r1.start - r1.end;
-        r0_size.cmp(&r1_size)
-      })
-      .unwrap();
+impl GlobalAllocator {
+  //pub fn new(regions: &info::MemoryRegions) -> BitMapAllocator {
+    //let region = regions.iter()
+      //.filter(|&r| matches!(r.kind, info::MemoryRegionKind::Usable))
+      //.max_by(|&r0, &r1| {
+        //let r0_size = r0.start - r0.end;
+        //let r1_size = r1.start - r1.end;
+        //r0_size.cmp(&r1_size)
+      //})
+      //.unwrap();
         
-    const USED_FLG_BLK_ALIGN: usize = FLAG_BITS * MEMORY_BLOCK_SIZE;
+    //const USED_FLG_BLK_ALIGN: usize = FLAG_BITS * MEMORY_BLOCK_SIZE;
 
-    let head = region.start as usize;
-    let head_aligned = (head + MEMORY_BLOCK_SIZE - 1) / MEMORY_BLOCK_SIZE * MEMORY_BLOCK_SIZE;
+    //let head = region.start as usize;
+    //let head_aligned = (head + MEMORY_BLOCK_SIZE - 1) / MEMORY_BLOCK_SIZE * MEMORY_BLOCK_SIZE;
 
-    let len = region.end as usize - head_aligned;
-    let len_aligned = len / MEMORY_BLOCK_SIZE * MEMORY_BLOCK_SIZE;
-    if len_aligned < MEMORY_BLOCK_SIZE {
-      panic!("max memory region is less than MEMORY_BLOCK_SIZE");
-    }
+    //let len = region.end as usize - head_aligned;
+    //let len_aligned = len / MEMORY_BLOCK_SIZE * MEMORY_BLOCK_SIZE;
+    //if len_aligned < MEMORY_BLOCK_SIZE {
+      //panic!("max memory region is less than MEMORY_BLOCK_SIZE");
+    //}
 
-    let require_for_used_flg = (len_aligned + USED_FLG_BLK_ALIGN - 1) / USED_FLG_BLK_ALIGN;
-    let used_flags = unsafe { core::slice::from_raw_parts_mut(head_aligned as *mut u64, require_for_used_flg) };
-    for idx in 0..require_for_used_flg {
-      let blk_idx = idx / FLAG_BITS;
-      let bit_idx = idx % FLAG_BITS;
+    //let require_for_used_flg = (len_aligned + USED_FLG_BLK_ALIGN - 1) / USED_FLG_BLK_ALIGN;
+    //let used_flags = unsafe { core::slice::from_raw_parts_mut(head_aligned as *mut u64, require_for_used_flg) };
+    //for idx in 0..require_for_used_flg {
+      //let blk_idx = idx / FLAG_BITS;
+      //let bit_idx = idx % FLAG_BITS;
       
-      used_flags[blk_idx] |= 1 << bit_idx;
-    }
+      //used_flags[blk_idx] |= 1 << bit_idx;
+    //}
 
-    let unsable_tail_count = FLAG_BITS - ((len_aligned / MEMORY_BLOCK_SIZE) % FLAG_BITS);
-    for idx in 0..unsable_tail_count {
-      used_flags[require_for_used_flg - 1] |= 1 << (FLAG_BITS - 1 - idx);
-    }
+    //let unsable_tail_count = FLAG_BITS - ((len_aligned / MEMORY_BLOCK_SIZE) % FLAG_BITS);
+    //for idx in 0..unsable_tail_count {
+      //used_flags[require_for_used_flg - 1] |= 1 << (FLAG_BITS - 1 - idx);
+    //}
 
-    let used_flags = UnsafeCell::new(used_flags.as_mut_ptr());
+    //let used_flags = UnsafeCell::new(used_flags.as_mut_ptr());
 
-    BitMapAllocator { head: head_aligned, capacity: len_aligned, used_flags }
-  }
+    //BitMapAllocator { head: head_aligned, capacity: len_aligned, used_flags }
+  //}
 
-  pub fn new_for_init(regions: &info::MemoryRegions) -> BitMapAllocator { 
+  pub fn new(regions: &'static mut info::MemoryRegions) -> GlobalAllocator { 
     fn align_blocksize(addr: usize) -> usize { 
       (addr + MEMORY_BLOCK_SIZE - 1) / MEMORY_BLOCK_SIZE * MEMORY_BLOCK_SIZE
     }
@@ -145,20 +158,21 @@ impl BitMapAllocator {
     let region = regions.iter_mut()
       .filter(|r| matches!(r.kind, info::MemoryRegionKind::Usable))
       .find(|r| {
-        let start = align_blocksize(r.start as usize)
+        let start = align_blocksize(r.start as usize);
         let end = r.end as usize;
 
         end - start >= INIT_ALLOC_SIZE
       })
       .expect("there is no space for initial allocation");
 
-    let head = align_blocksize(region.start as usize);
-    let capacity = region.end as usize - head;
-    let used_flags = UnsafeCell::new(unsafe{ &mut init_alloc_bitmap as *mut FlagElemType});
-    BitMapAllocator { head, capacity, used_flags }
+    let head = unsafe { &mut INIT_MEMORY_BUFFER.0 as *mut u8 } as usize;
+    let capacity = INIT_ALLOC_SIZE;
+    let used_flags = UnsafeCell::new(unsafe{ &mut INIT_MEMORY_BITMAP as *mut FlagElemType});
+
+    GlobalAllocator { head, capacity, used_flags, regions }
   }
 }
 
-pub fn set_allocator(allocator: BitMapAllocator) {
+pub fn set_allocator(allocator: GlobalAllocator) {
   unsafe { GLOBAL_ALLOCATOR = allocator }
 }
