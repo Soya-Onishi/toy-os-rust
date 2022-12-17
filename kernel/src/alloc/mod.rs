@@ -23,6 +23,11 @@ static GLOBAL_ALLOCATOR: GlobalAllocator = GlobalAllocator {
     bitmap: RefCell::new([0; HEAP_BITMAP_SIZE]),
 }; 
 
+#[alloc_error_handler]
+fn alloc_error(_: core::alloc::Layout) -> ! {
+  loop {}
+}
+
 #[repr(align(4096))]
 struct GlobalAllocator {
   head: [u8; STATIC_HEAP_SIZE],
@@ -78,7 +83,8 @@ unsafe impl GlobalAlloc for GlobalAllocator {
   }
 
   unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
-    let head_idx = ptr as usize / MEMORY_BLOCK_SIZE;
+    let head_offset = ptr as usize - self.head.as_ptr() as usize;
+    let head_idx = head_offset / MEMORY_BLOCK_SIZE;
     let entries = (layout.size() + MEMORY_BLOCK_SIZE - 1) / MEMORY_BLOCK_SIZE;
 
     self.semaphore_ops(|allocator| {

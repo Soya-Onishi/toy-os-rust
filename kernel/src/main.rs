@@ -1,5 +1,6 @@
 #![no_std]
 #![no_main]
+#![feature(alloc_error_handler)]
 
 mod video;
 mod alloc;
@@ -18,6 +19,9 @@ fn kernel_main(boot_info: &'static mut bootloader_api::BootInfo) -> ! {
     let frame_buffer = boot_info.framebuffer.as_mut().unwrap();
     let mut screen = Screen::new(frame_buffer);
     screen.clear(video::Color::black());  
+
+    screen.write_str(b"Hello World\n");
+    screen.write_str(b"Hello World\n");
 
     loop {}
 }

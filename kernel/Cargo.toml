@@ -9,3 +9,6 @@ edition = "2021"
 [dependencies]
 bootloader_api = "0.11"
 x86_64 = "0.14"
+
+[build-dependencies]
+font_binary_gen = { path = "../font_binary_gen" }
