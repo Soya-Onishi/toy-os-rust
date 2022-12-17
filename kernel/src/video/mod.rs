@@ -157,10 +157,21 @@ impl Screen {
       }
     }
 
-    let tail_y = (self.text_size.y - 1) * 16 * self.info.stride * self.info.bytes_per_pixel;
-    unsafe { core::ptr::write_bytes(self.frame_buffer.as_mut_ptr().offset(tail_y as isize), 0, self.info.stride * self.info.bytes_per_pixel * 16) };
-
     let last_line = self.text_size.x * (self.text_size.y - 1);
+    
+    let last_text_line_y = (self.text_size.y - 1) * 16 * self.info.stride * self.info.bytes_per_pixel; 
+    let last_line_text_len = self.text_buffer[last_line..].iter().position(|r| *r == 0).unwrap_or(self.text_size.x - 1);
+    let last_line_text_width = last_line_text_len * 8 * self.info.bytes_per_pixel;
+    for offset in 0..16 {
+      let start = last_text_line_y + offset * self.info.stride * self.info.bytes_per_pixel;
+      let end = start + last_line_text_width;
+
+      self.frame_buffer[start..end].fill(0);
+    }
+
+    // self.frame_buffer[last_text_line_y..].fill(0);
+    // unsafe { core::ptr::write_bytes(self.frame_buffer.as_mut_ptr().offset(tail_y as isize), 0, self.info.stride * self.info.bytes_per_pixel * 16) };
+
     self.text_buffer.copy_within(self.text_size.x.., 0);
     self.text_buffer[last_line..].fill(0);
   }
