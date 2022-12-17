@@ -1,42 +1,32 @@
 mod paging;
 
 use core::alloc::GlobalAlloc;
-use core::cell::UnsafeCell;
+use core::cell::RefCell;
+use core::sync::atomic;
+use core::sync::atomic::AtomicBool;
 use core::ptr;
-use core::arch::asm;
-use core::matches;
-
-use bootloader_api::info;
 
 type FlagElemType = u64;
 
 const MEMORY_BLOCK_SIZE: usize = 4096;
 const FLAG_BITS: usize = FlagElemType::BITS as usize;
-const INIT_ALLOC_SIZE: usize = 4 * 1024 * 1024;
-const INIT_BITMAP_SIZE: usize = INIT_ALLOC_SIZE / (MEMORY_BLOCK_SIZE * FLAG_BITS);
+const STATIC_HEAP_SIZE: usize = 512 * 1024 * 1024; // 512MiB
+const HEAP_BITMAP_SIZE: usize = STATIC_HEAP_SIZE / (MEMORY_BLOCK_SIZE * FLAG_BITS);
 
-static mut MEMORY_REGIONS: info::MemoryRegions = info::MemoryRegions {
-  ptr: ptr::null_mut(),
-  len: 0,
-};
-
-#[repr(align(4096))]
-#[repr(C)]
-struct InitBuffer([u8; INIT_ALLOC_SIZE]);
-static mut INIT_MEMORY_BUFFER: InitBuffer = InitBuffer([0; INIT_ALLOC_SIZE]);
-static mut INIT_MEMORY_BITMAP: [FlagElemType; INIT_BITMAP_SIZE] = [0; INIT_BITMAP_SIZE];
+// GLOBAL_ALLOCATORが使用中かどうかを示す
+// trueなら使用中
+static ALLOCATOR_SEMAPHORE: AtomicBool = AtomicBool::new(false);
 
 #[global_allocator]
-static mut GLOBAL_ALLOCATOR: GlobalAllocator = GlobalAllocator { 
-    head: unsafe { &mut INIT_MEMORY_BUFFER.0[..] }, 
-    capacity: 0, 
-    next: ptr::null_mut(),
+static GLOBAL_ALLOCATOR: GlobalAllocator = GlobalAllocator { 
+    head: [0; STATIC_HEAP_SIZE], 
+    bitmap: RefCell::new([0; HEAP_BITMAP_SIZE]),
 }; 
 
-pub struct GlobalAllocator {
-  head: &'static mut [u8],
-  capacity: usize,
-  next: *mut GlobalAllocator,
+#[repr(align(4096))]
+struct GlobalAllocator {
+  head: [u8; STATIC_HEAP_SIZE],
+  bitmap: RefCell<[FlagElemType; HEAP_BITMAP_SIZE]>
 }
 
 unsafe impl Sync for GlobalAllocator {}
@@ -45,134 +35,78 @@ unsafe impl GlobalAlloc for GlobalAllocator {
   unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
     let size = layout.size();
     let entries = (size + MEMORY_BLOCK_SIZE - 1) / MEMORY_BLOCK_SIZE;
-    let mut alloc_from = 0;
-    let mut allocatable = 0;
+    self.semaphore_ops(|allocator| {
+      let mut alloc_from = 0;
+      let mut allocatable = 0;
 
-    asm!("cli");
-    let allocator = unsafe { &mut GLOBAL_ALLOCATOR };
-    if allocator.capacity < size { 
+      let mut bitmap = allocator.bitmap.borrow_mut();
+      // 得られたentriesを連続して確保できる領域が存在するか探索する
+      'alloc_search: for (idx, &flg) in bitmap.iter().enumerate() {
+        for i in 0..FLAG_BITS {
+          if (flg & (1 << i)) == 0 {
+            if allocatable == 0 {
+              alloc_from = idx * FLAG_BITS + i; 
+            }
 
-    }
-    let used_flags = core::slice::from_raw_parts_mut(*self.used_flags.get(), self.capacity / MEMORY_BLOCK_SIZE);
-
-    // 得られたentriesを連続して確保できる領域が存在するか探索する
-    'alloc_search: for (idx, flg) in used_flags.iter().enumerate() {
-      for i in 0..FLAG_BITS {
-        if (flg & (1 << i)) == 0 {
-          if allocatable == 0 {
-            alloc_from = idx * FLAG_BITS + i; 
+            allocatable += 1;
+          } else {
+            allocatable = 0;
           }
 
-          allocatable += 1;
-        } else {
-          allocatable = 0;
-        }
-
-        if allocatable >= entries {
-          break 'alloc_search;
+          if allocatable >= entries {
+            break 'alloc_search;
+          }
         }
       }
-    }
 
-    let allocated_ptr = if allocatable < entries {
-      ptr::null_mut()
-    } else {
-      // 実際に領域を確保する
-      for offset in 0..entries {
-        let blk_idx = (alloc_from + offset) / FLAG_BITS;
-        let bit_idx = (alloc_from + offset) % FLAG_BITS;
+      let allocated_ptr = if allocatable < entries {
+        ptr::null_mut()
+      } else {
+        // 実際に領域を確保する
+        for offset in 0..entries {
+          let blk_idx = (alloc_from + offset) / FLAG_BITS;
+          let bit_idx = (alloc_from + offset) % FLAG_BITS;
 
-        used_flags[blk_idx] |= 1_u64 << bit_idx;
-      }
+          bitmap[blk_idx] |= 1_u64 << bit_idx;
+        }
 
-      (self.head + alloc_from * MEMORY_BLOCK_SIZE) as *mut u8
-    };
-    
-    asm!("sti");
+        (allocator.head.as_ptr() as usize + alloc_from * MEMORY_BLOCK_SIZE) as *mut u8
+      };
 
-    allocated_ptr
+      allocated_ptr
+    })
   }
 
   unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout) {
     let head_idx = ptr as usize / MEMORY_BLOCK_SIZE;
     let entries = (layout.size() + MEMORY_BLOCK_SIZE - 1) / MEMORY_BLOCK_SIZE;
 
-    asm!("cli");
-    let used_flags = core::slice::from_raw_parts_mut(*self.used_flags.get(), self.capacity / MEMORY_BLOCK_SIZE);
-    for offset in 0..entries {
-      let blk_idx = (head_idx + offset) / FLAG_BITS;
-      let bit_idx = (head_idx + offset) & FLAG_BITS;
+    self.semaphore_ops(|allocator| {
+      let mut bitmap = allocator.bitmap.borrow_mut();
 
-      used_flags[blk_idx] &= !(1 << bit_idx);
-    } 
-    asm!("sti");
+      for offset in 0..entries {
+        let blk_idx = (head_idx + offset) / FLAG_BITS;
+        let bit_idx = (head_idx + offset) & FLAG_BITS;
+
+        bitmap[blk_idx] &= !(1 << bit_idx);
+      }
+    });
   }
 }
 
 impl GlobalAllocator {
-  //pub fn new(regions: &info::MemoryRegions) -> BitMapAllocator {
-    //let region = regions.iter()
-      //.filter(|&r| matches!(r.kind, info::MemoryRegionKind::Usable))
-      //.max_by(|&r0, &r1| {
-        //let r0_size = r0.start - r0.end;
-        //let r1_size = r1.start - r1.end;
-        //r0_size.cmp(&r1_size)
-      //})
-      //.unwrap();
-        
-    //const USED_FLG_BLK_ALIGN: usize = FLAG_BITS * MEMORY_BLOCK_SIZE;
+  fn semaphore_ops<T>(&self, f: impl Fn(&Self) -> T) -> T{
+    while let Err(_) = ALLOCATOR_SEMAPHORE.compare_exchange(
+      false, 
+      true, 
+      atomic::Ordering::AcqRel,
+      atomic::Ordering::Acquire
+    ) {}
 
-    //let head = region.start as usize;
-    //let head_aligned = (head + MEMORY_BLOCK_SIZE - 1) / MEMORY_BLOCK_SIZE * MEMORY_BLOCK_SIZE;
+    let ret = f(self);
 
-    //let len = region.end as usize - head_aligned;
-    //let len_aligned = len / MEMORY_BLOCK_SIZE * MEMORY_BLOCK_SIZE;
-    //if len_aligned < MEMORY_BLOCK_SIZE {
-      //panic!("max memory region is less than MEMORY_BLOCK_SIZE");
-    //}
+    ALLOCATOR_SEMAPHORE.store(false, atomic::Ordering::Release);
 
-    //let require_for_used_flg = (len_aligned + USED_FLG_BLK_ALIGN - 1) / USED_FLG_BLK_ALIGN;
-    //let used_flags = unsafe { core::slice::from_raw_parts_mut(head_aligned as *mut u64, require_for_used_flg) };
-    //for idx in 0..require_for_used_flg {
-      //let blk_idx = idx / FLAG_BITS;
-      //let bit_idx = idx % FLAG_BITS;
-      
-      //used_flags[blk_idx] |= 1 << bit_idx;
-    //}
-
-    //let unsable_tail_count = FLAG_BITS - ((len_aligned / MEMORY_BLOCK_SIZE) % FLAG_BITS);
-    //for idx in 0..unsable_tail_count {
-      //used_flags[require_for_used_flg - 1] |= 1 << (FLAG_BITS - 1 - idx);
-    //}
-
-    //let used_flags = UnsafeCell::new(used_flags.as_mut_ptr());
-
-    //BitMapAllocator { head: head_aligned, capacity: len_aligned, used_flags }
-  //}
-
-  pub fn new(regions: &'static mut info::MemoryRegions) -> GlobalAllocator { 
-    fn align_blocksize(addr: usize) -> usize { 
-      (addr + MEMORY_BLOCK_SIZE - 1) / MEMORY_BLOCK_SIZE * MEMORY_BLOCK_SIZE
-    }
-
-    let region = regions.iter_mut()
-      .filter(|r| matches!(r.kind, info::MemoryRegionKind::Usable))
-      .find(|r| {
-        let start = align_blocksize(r.start as usize);
-        let end = r.end as usize;
-
-        end - start >= INIT_ALLOC_SIZE
-      })
-      .expect("there is no space for initial allocation");
-
-    let head = unsafe { &mut INIT_MEMORY_BUFFER.0 as *mut u8 } as usize;
-    let capacity = INIT_ALLOC_SIZE;
-    let used_flags = UnsafeCell::new(unsafe{ &mut INIT_MEMORY_BITMAP as *mut FlagElemType});
-
-    GlobalAllocator { head, capacity, used_flags, regions }
+    ret
   }
-}
-
-pub fn set_allocator(allocator: GlobalAllocator) {
-  unsafe { GLOBAL_ALLOCATOR = allocator }
 }

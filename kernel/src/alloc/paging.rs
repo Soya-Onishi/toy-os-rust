@@ -1,7 +1,5 @@
 const PAGE_ENTRY_NUM: usize = 512;
 
-static mut init_paging_buffer: [PageTable; ]
-
 #[repr(C)]
 struct  PageTable {
   entries: [PageEntry; PAGE_ENTRY_NUM],
