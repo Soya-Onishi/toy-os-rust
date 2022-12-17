@@ -20,8 +20,20 @@ fn kernel_main(boot_info: &'static mut bootloader_api::BootInfo) -> ! {
     let mut screen = Screen::new(frame_buffer);
     screen.clear(video::Color::black());  
 
-    screen.write_str(b"Hello World\n");
-    screen.write_str(b"Hello World\n");
+    let text = b"abcdefghijklmnopqrstuvwxyz";
+    for _ in 0..10 {
+        for i in 0..26 {
+            let s = &text[..=i];
+            screen.write_str(s); 
+            screen.write_char('\n' as u8);
+        }
+    
+        for i in 0..26 {
+            let s = &text[..=(25 - i)];
+            screen.write_str(s);
+            screen.write_char('\n' as u8);
+        }
+    }    
 
     loop {}
 }

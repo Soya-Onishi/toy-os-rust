@@ -27,8 +27,8 @@ impl Screen {
     let frame_buffer = buffer.buffer_mut();
     
     let text_buf_size = (info.width / 8, info.height / 16);
-    let row = vec![0; text_buf_size.0 / 8];
-    let buf = vec![row.clone(); info.height / 16];
+    let row = vec![0; text_buf_size.0];
+    let buf = vec![row.clone(); text_buf_size.1];
 
     Screen{ frame_buffer, info, text_buffer: buf, text_size: text_buf_size, cursor: (0, 0) }
   }
@@ -81,40 +81,90 @@ impl Screen {
   pub fn write_char(&mut self, c: u8) {
     let (x, y) = self.cursor;
     self.text_buffer[y][x] = c; 
-    self.draw_char(x, y, c);
 
-    let (x, y) = &mut self.cursor;
-    if c == '\n' as u8 {
-      *y += 1;
-      *x = 0; 
+    self.cursor = if c == '\n' as u8 {
+      if y >= self.text_size.1 - 1 {
+        self.newline();
+      }
+
+      (0, core::cmp::min(y + 1, self.text_size.1 - 1))
     } else {
-      *x = core::cmp::min(*x + 1, self.text_size.0)
-    }
+      self.draw_char(x, y, c);
+      (core::cmp::min(x + 1, self.text_size.0 - 1), y)
+    };
   }
 
   fn draw_char(&mut self, x: usize, y: usize, c: u8) {
     let offset = c as usize * 16;
     let font = &FONT_BINARY[offset..(offset + 16)];
-    let screen_pos = (x * 8, y * 16);
+    let screen_pos = (x * 8, y * 16 * self.info.stride);
 
     let black = [0; 8];
     let white = [255; 8];
     
     for row in 0..16 {
-      let y = screen_pos.1 + row * self.info.stride; 
+      let screen_y = screen_pos.1 + row * self.info.stride;
       for col in 0..8 {
-        let x = screen_pos.0 + col;
+        let screen_x = screen_pos.0 + col;
         let color = if font[row] & (1 << (7 - col)) == 0 {
           black
         } else {
           white
         };
-
+ 
+        let offset = self.info.bytes_per_pixel * (screen_y + screen_x);
         for idx in 0..self.info.bytes_per_pixel {
-          let offset = self.info.bytes_per_pixel * (y + x);
           self.frame_buffer[offset + idx] = color[idx];
         }
       }
+    }
+  }
+
+  fn newline(&mut self) {
+    for y in 16..self.info.height {
+      let text_y = y / 16;
+       let src_text_tail_x = self.text_buffer[text_y]
+        .iter()
+        .position(|r| *r == 0)
+        .unwrap_or(self.text_size.0 - 1);
+      let dst_text_tail_x = self.text_buffer[text_y - 1]
+        .iter()
+        .position(|r| *r == 0)
+        .unwrap_or(self.text_size.0 - 1);
+      
+      // let src_screen_tail_x = src_text_tail_x * self.info.bytes_per_pixel * 8;
+      // let dst_screen_tail_x = dst_text_tail_x * self.info.bytes_per_pixel * 8;
+      let src_screen_tail_x = self.info.stride * self.info.bytes_per_pixel;
+      let dst_screen_tail_x = self.info.stride * self.info.bytes_per_pixel;
+
+      let src_y = y * self.info.stride * self.info.bytes_per_pixel;
+      let dst_y = (y - 16) * self.info.stride * self.info.bytes_per_pixel;
+
+      for idx in 0..dst_screen_tail_x {
+        self.frame_buffer[dst_y + idx] = 0;
+      }
+
+      for x in 0..src_screen_tail_x {
+        let src_idx = src_y + x;
+        let dst_idx = dst_y + x; 
+       
+        self.frame_buffer[dst_idx] = self.frame_buffer[src_idx];
+      }
+    }
+
+    let tail_y = (self.text_size.1 - 1) * 16 * self.info.stride * self.info.bytes_per_pixel;
+    unsafe { core::ptr::write_bytes(self.frame_buffer.as_mut_ptr().offset(tail_y as isize), 0, self.info.stride * self.info.bytes_per_pixel * 16) };
+
+    for y in 1..self.text_size.1 {
+      for x in 0..self.text_size.0 {
+        self.text_buffer[y - 1][x] = 0;
+      }
+      for x in 0..self.text_size.0 {
+        self.text_buffer[y - 1][x] = self.text_buffer[y][x];
+      }
+    }
+    for x in 0..self.text_size.0 {
+      self.text_buffer[self.text_size.1 - 1][x] = 0;
     }
   }
 }
@@ -122,9 +172,5 @@ impl Screen {
 impl Color {
   pub fn black() -> Color {
     Color{ r: 0, g: 0, b: 0 }
-  }
-
-  pub fn white() -> Color {
-    Color{ r: 255, g: 255, b: 255 }
   }
 }

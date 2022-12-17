@@ -87,6 +87,8 @@ unsafe impl GlobalAlloc for GlobalAllocator {
     let head_idx = head_offset / MEMORY_BLOCK_SIZE;
     let entries = (layout.size() + MEMORY_BLOCK_SIZE - 1) / MEMORY_BLOCK_SIZE;
 
+    core::ptr::write_bytes(ptr, 0, entries * MEMORY_BLOCK_SIZE);
+
     self.semaphore_ops(|allocator| {
       let mut bitmap = allocator.bitmap.borrow_mut();
 
