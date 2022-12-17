@@ -4,12 +4,14 @@ use bootloader_api::info::{FrameBuffer, FrameBufferInfo, PixelFormat};
 use alloc::vec;
 use alloc::vec::Vec;
 
+struct Vector{ x: usize, y: usize }
+
 pub struct Screen {
   frame_buffer: &'static mut [u8],
   info: FrameBufferInfo,
-  cursor: (usize, usize),
-  text_size: (usize, usize),
-  text_buffer: Vec<Vec<u8>>, 
+  cursor: Vector,
+  text_size: Vector,
+  text_buffer: Vec<u8>, 
 }
 
 #[derive(Clone, Copy)]
@@ -25,12 +27,12 @@ impl Screen {
   pub fn new(buffer: &'static mut FrameBuffer) -> Screen {
     let info = buffer.info();
     let frame_buffer = buffer.buffer_mut();
-    
-    let text_buf_size = (info.width / 8, info.height / 16);
-    let row = vec![0; text_buf_size.0];
-    let buf = vec![row.clone(); text_buf_size.1];
+   
+    let text_size = Vector{ x: info.width / 8, y: info.height / 16 };
+    let buf = vec![0; text_size.x * text_size.y];
 
-    Screen{ frame_buffer, info, text_buffer: buf, text_size: text_buf_size, cursor: (0, 0) }
+    let cursor = Vector{ x: 0, y: 0 };
+    Screen{ frame_buffer, info, text_buffer: buf, text_size, cursor }
   }
 
   pub fn clear(&mut self, color: Color) {
@@ -79,18 +81,19 @@ impl Screen {
   }
 
   pub fn write_char(&mut self, c: u8) {
-    let (x, y) = self.cursor;
-    self.text_buffer[y][x] = c; 
+    let Vector { x, y } = self.cursor;
+    self.text_buffer[x + y * self.text_size.x] = c; 
 
     self.cursor = if c == '\n' as u8 {
-      if y >= self.text_size.1 - 1 {
+      if y >= self.text_size.y - 1 {
         self.newline();
       }
 
-      (0, core::cmp::min(y + 1, self.text_size.1 - 1))
+      Vector{ x: 0, y: core::cmp::min(y + 1, self.text_size.y - 1) }
     } else {
       self.draw_char(x, y, c);
-      (core::cmp::min(x + 1, self.text_size.0 - 1), y)
+
+      Vector{ x: core::cmp::min(x + 1, self.text_size.x - 1), y }
     };
   }
 
@@ -123,14 +126,16 @@ impl Screen {
   fn newline(&mut self) {
     for y in 16..self.info.height {
       let text_y = y / 16;
-       let src_text_tail_x = self.text_buffer[text_y]
+      let text_offset = text_y * self.text_size.x;
+      let text_line_len = self.text_size.x;
+      let src_text_tail_x = self.text_buffer[text_offset..(text_offset + text_line_len)]
         .iter()
         .position(|r| *r == 0)
-        .unwrap_or(self.text_size.0 - 1);
-      let dst_text_tail_x = self.text_buffer[text_y - 1]
+        .unwrap_or(text_line_len - 1);
+      let dst_text_tail_x = self.text_buffer[text_offset..(text_offset + text_line_len)]
         .iter()
         .position(|r| *r == 0)
-        .unwrap_or(self.text_size.0 - 1);
+        .unwrap_or(text_line_len - 1);
       
       // let src_screen_tail_x = src_text_tail_x * self.info.bytes_per_pixel * 8;
       // let dst_screen_tail_x = dst_text_tail_x * self.info.bytes_per_pixel * 8;
@@ -152,20 +157,12 @@ impl Screen {
       }
     }
 
-    let tail_y = (self.text_size.1 - 1) * 16 * self.info.stride * self.info.bytes_per_pixel;
+    let tail_y = (self.text_size.y - 1) * 16 * self.info.stride * self.info.bytes_per_pixel;
     unsafe { core::ptr::write_bytes(self.frame_buffer.as_mut_ptr().offset(tail_y as isize), 0, self.info.stride * self.info.bytes_per_pixel * 16) };
 
-    for y in 1..self.text_size.1 {
-      for x in 0..self.text_size.0 {
-        self.text_buffer[y - 1][x] = 0;
-      }
-      for x in 0..self.text_size.0 {
-        self.text_buffer[y - 1][x] = self.text_buffer[y][x];
-      }
-    }
-    for x in 0..self.text_size.0 {
-      self.text_buffer[self.text_size.1 - 1][x] = 0;
-    }
+    let last_line = self.text_size.x * (self.text_size.y - 1);
+    self.text_buffer.copy_within(self.text_size.x.., 0);
+    self.text_buffer[last_line..].fill(0);
   }
 }
 
