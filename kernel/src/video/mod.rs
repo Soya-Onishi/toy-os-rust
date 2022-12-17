@@ -35,43 +35,8 @@ impl Screen {
     Screen{ frame_buffer, info, text_buffer: buf, text_size, cursor }
   }
 
-  pub fn clear(&mut self, color: Color) {
-    let height = self.info.height;
-    let width = self.info.stride;
-    let pixel_size = self.info.bytes_per_pixel;
-    let mut pixel = [0; 8];
-
-    match self.info.pixel_format {
-      PixelFormat::Rgb => {
-        pixel[0] = color.r;
-        pixel[1] = color.g;
-        pixel[2] = color.b;
-      } 
-      PixelFormat::Bgr => {
-        pixel[0] = color.b;
-        pixel[1] = color.g;
-        pixel[2] = color.r;
-      }
-      PixelFormat::U8  => {
-        let r = color.r as u16;
-        let g = color.g as u16;
-        let b = color.b as u16;
-        let mono = (r + g + b) / 3;
-        for p in pixel.iter_mut() {
-          *p = mono as u8;
-        }
-      }
-      _ => panic!("not supported PixelFormat. abort."),
-    };
-
-    for dst in self.frame_buffer.chunks_mut(pixel_size) {
-      dst.copy_from_slice(&pixel[0..pixel_size]);
-    }
-    for i in 0..height * width {
-      let start = i * pixel_size;
-      let end = (i + 1) * pixel_size;
-      self.frame_buffer[start..end].copy_from_slice(&pixel[0..pixel_size])
-    } 
+  pub fn clear(&mut self) {
+    self.frame_buffer.fill(0); 
   }
 
   pub fn write_str(&mut self, s: &[u8]) {
@@ -124,41 +89,34 @@ impl Screen {
   }
 
   fn newline(&mut self) {
-    for y in 16..self.info.height {
-      let text_y = y / 16;
-      let text_offset = text_y * self.text_size.x;
-      let text_line_len = self.text_size.x;
-      let src_text_tail_x = self.text_buffer[text_offset..(text_offset + text_line_len)]
+    for text_y in 1..self.text_size.y {
+      let src_text_offset = text_y * self.text_size.x;
+      let dst_text_offset = (text_y - 1) * self.text_size.x;
+      let src_pixel_offset = text_y       * 16 * self.info.stride * self.info.bytes_per_pixel;
+      let dst_pixel_offset = (text_y - 1) * 16 * self.info.stride * self.info.bytes_per_pixel;
+
+      let src_text_tail_x = self.text_buffer[src_text_offset..(src_text_offset + self.text_size.x)]
         .iter()
         .position(|r| *r == 0)
-        .unwrap_or(text_line_len - 1);
-      let dst_text_tail_x = self.text_buffer[text_offset..(text_offset + text_line_len)]
+        .unwrap_or(self.text_size.x - 1);
+      let dst_text_tail_x = self.text_buffer[dst_text_offset..(dst_text_offset + self.text_size.x)]
         .iter()
         .position(|r| *r == 0)
-        .unwrap_or(text_line_len - 1);
-      
-      // let src_screen_tail_x = src_text_tail_x * self.info.bytes_per_pixel * 8;
-      // let dst_screen_tail_x = dst_text_tail_x * self.info.bytes_per_pixel * 8;
-      let src_screen_tail_x = self.info.stride * self.info.bytes_per_pixel;
-      let dst_screen_tail_x = self.info.stride * self.info.bytes_per_pixel;
+        .unwrap_or(self.text_size.x - 1);
 
-      let src_y = y * self.info.stride * self.info.bytes_per_pixel;
-      let dst_y = (y - 16) * self.info.stride * self.info.bytes_per_pixel;
+      let src_screen_tail_x = src_text_tail_x * self.info.bytes_per_pixel * 8;
+      let dst_screen_tail_x = dst_text_tail_x * self.info.bytes_per_pixel * 8;
 
-      for idx in 0..dst_screen_tail_x {
-        self.frame_buffer[dst_y + idx] = 0;
-      }
+      for idx in 0..16 {
+        let dst_y = dst_pixel_offset + idx * self.info.stride * self.info.bytes_per_pixel;
+        let src_y = src_pixel_offset + idx * self.info.stride * self.info.bytes_per_pixel; 
 
-      for x in 0..src_screen_tail_x {
-        let src_idx = src_y + x;
-        let dst_idx = dst_y + x; 
-       
-        self.frame_buffer[dst_idx] = self.frame_buffer[src_idx];
-      }
+        self.frame_buffer[dst_y..(dst_y + dst_screen_tail_x)].fill(0);
+        self.frame_buffer.copy_within(src_y..(src_y + src_screen_tail_x), dst_y);
+      } 
     }
-
-    let last_line = self.text_size.x * (self.text_size.y - 1);
-    
+          
+    let last_line = self.text_size.x * (self.text_size.y - 1);    
     let last_text_line_y = (self.text_size.y - 1) * 16 * self.info.stride * self.info.bytes_per_pixel; 
     let last_line_text_len = self.text_buffer[last_line..].iter().position(|r| *r == 0).unwrap_or(self.text_size.x - 1);
     let last_line_text_width = last_line_text_len * 8 * self.info.bytes_per_pixel;
@@ -168,9 +126,6 @@ impl Screen {
 
       self.frame_buffer[start..end].fill(0);
     }
-
-    // self.frame_buffer[last_text_line_y..].fill(0);
-    // unsafe { core::ptr::write_bytes(self.frame_buffer.as_mut_ptr().offset(tail_y as isize), 0, self.info.stride * self.info.bytes_per_pixel * 16) };
 
     self.text_buffer.copy_within(self.text_size.x.., 0);
     self.text_buffer[last_line..].fill(0);

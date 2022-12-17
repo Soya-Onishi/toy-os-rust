@@ -18,7 +18,7 @@ fn panic(_info: &PanicInfo) -> ! {
 fn kernel_main(boot_info: &'static mut bootloader_api::BootInfo) -> ! {
     let frame_buffer = boot_info.framebuffer.as_mut().unwrap();
     let mut screen = Screen::new(frame_buffer);
-    screen.clear(video::Color::black());  
+    screen.clear();
 
     let text = b"abcdefghijklmnopqrstuvwxyz";
     for _ in 0..10 {
